@@ -1,9 +1,59 @@
 {
   "hooks": {
-    "SessionStart":   [{ "type": "command", "command": "node scripts/clodey.js start" }],
-    "PreToolUse":     [{ "type": "command", "command": "node scripts/clodey.js state thinking" }],
-    "PostToolUse":    [{ "type": "command", "command": "node scripts/clodey.js state $CLAUDE_TOOL_EXIT_CODE" }],
-    "Notification":   [{ "type": "command", "command": "node scripts/clodey.js state permission" }],
-    "Stop":           [{ "type": "command", "command": "node scripts/clodey.js state idle" }]
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node scripts/clodey.js start"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node scripts/clodey.js state thinking"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node scripts/clodey.js state $CLAUDE_TOOL_EXIT_CODE"
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node scripts/clodey.js state permission"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node scripts/clodey.js state idle"
+          }
+        ]
+      }
+    ]
   }
 }
