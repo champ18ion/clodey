@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "clodey",
+  "description": "Floating pixel mascot with real-time token awareness for Claude Code.",
+  "owner": {
+    "name": "champ18ion",
+    "email": ""
+  },
+  "plugins": [
+    {
+      "name": "clodey",
+      "description": "Floating pixel mascot that reacts to session state and token usage.",
+      "source": "./"
+    }
+  ]
+}
