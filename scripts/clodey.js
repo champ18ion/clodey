@@ -165,12 +165,63 @@ function statusCommand() {
   console.log('└──────────────────────────────────────┘');
 }
 
+// ── Serve: spawn server.js detached and return immediately ───────────────────
+
+const PID_FILE = path.join(CLAUDE_DIR, 'clodey-server.pid');
+
+function serveCommand() {
+  const port = getPort();
+  // Check if already running
+  if (port) {
+    const alive = require('http').request({ hostname: '127.0.0.1', port, path: '/health', method: 'GET' });
+    let running = false;
+    alive.on('response', res => {
+      if (res.statusCode === 200) {
+        console.log(`clodey already running on :${port}`);
+        running = true;
+      }
+      res.resume();
+      if (!running) spawn();
+    });
+    alive.on('error', () => spawn());
+    alive.setTimeout(400, () => { alive.destroy(); spawn(); });
+    alive.end();
+  } else {
+    spawn();
+  }
+
+  function spawn() {
+    const { spawn: sp } = require('child_process');
+    const serverScript = path.join(__dirname, 'server.js');
+    const child = sp(process.execPath, [serverScript], {
+      detached: true,
+      stdio:    'ignore',
+    });
+    child.unref();
+    console.log(`clodey started (pid ${child.pid}) — start claude in this terminal`);
+  }
+}
+
+// ── Stop: kill background server ──────────────────────────────────────────────
+
+function stopCommand() {
+  try {
+    const pid = parseInt(fs.readFileSync(PID_FILE, 'utf8').trim(), 10);
+    process.kill(pid, 'SIGTERM');
+    console.log(`clodey stopped (pid ${pid})`);
+  } catch (_) {
+    console.log('clodey server not running');
+  }
+}
+
 // ── Entry ─────────────────────────────────────────────────────────────────────
 
 const [,, cmd, signal] = process.argv;
 
-if      (cmd === 'daemon')                  runDaemon();
+if      (cmd === 'serve')                   serveCommand();
+else if (cmd === 'stop')                    stopCommand();
+else if (cmd === 'daemon')                  runDaemon();
 else if (cmd === 'state' && signal != null) hookRender(signal);
 else if (cmd === 'start')                   hookRender('start');
 else if (cmd === 'status')                  statusCommand();
-else { console.error('Usage: clodey.js <server|daemon|state <signal>|status>'); process.exit(1); }
+else { console.error('Usage: clodey.js <serve|stop|daemon|state <signal>|status>'); process.exit(1); }
