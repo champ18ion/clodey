@@ -8,10 +8,10 @@ Floating pixel-art mascot for Claude Code. Reacts in real time to your session s
   ╰────┬─────╯
        │
   ░░████████░░
-  ░██▓▓▓▓▓▓██░
-  ██▓▓▓▓▓▓▓███
-  ██▓░▓▓░▓▓▓██   ← Clodey
-  ██▓▒▒▒▒▒▓▓██
+  ░██░░░░░░██░
+  ██░░░░░░░███
+  ██░▓░░▓░░░██   ← Clodey
+  ██░░░░░░░░██
   ░████████░░░
   ░░░██░░██░░░
   ▕████░░░░░░▏ 26% ↺4:07
@@ -26,21 +26,25 @@ Floating pixel-art mascot for Claude Code. Reacts in real time to your session s
 
 ## Usage
 
-Clodey runs as a live mascot in a side terminal window. Open a second terminal and run:
+Start the Clodey server **before** launching Claude Code in the same terminal:
 
 ```bash
-node scripts/clodey.js daemon
+node ~/.claude/plugins/clodey/scripts/server.js
 ```
 
-Keep that window visible alongside your Claude Code terminal. The mascot reacts automatically as Claude works — no extra setup needed. Hooks fire from within Claude Code, update the shared state file, and the daemon renders the changes instantly.
+That's it. The server locks the bottom rows of your terminal, renders the mascot, and listens for hook events. Then start Claude Code in the same terminal — the mascot appears automatically and reacts as Claude works.
 
-For a quick status check without the daemon, run inside Claude Code:
-
+**Check status anytime:**
 ```
-! node scripts/clodey.js status
+! node ~/.claude/plugins/clodey/scripts/clodey.js status
 ```
 
 Or use the skill: `/clodey-status`
+
+**Without the server** (fallback): Clodey still tracks state in `~/.claude/clodey-state.json`. Run the daemon in a side terminal to see it:
+```bash
+node ~/.claude/plugins/clodey/scripts/clodey.js daemon
+```
 
 ## States
 
@@ -57,18 +61,17 @@ Or use the skill: `/clodey-status`
 
 ## Token tracking
 
-Clodey reads `anthropic-ratelimit-unified-*` response headers — the same source as the Claude.ai web UI usage bar. It shows:
+Clodey reads `anthropic-ratelimit-unified-*` headers — the same source as the Claude.ai web UI usage bar:
 
-- **Plan usage %** — your 5-hour or 7-day window utilization
-- **This session +%** — how much of the limit was used since this session started
+- **Plan usage %** — 5-hour or 7-day window utilization
+- **This session +%** — usage added since this session started  
 - **Resets in** — countdown to window reset
 
-Token data refreshes automatically every 10 minutes via hooks. Between refreshes, the daemon shows the last known value.
+Tokens refresh every 10 minutes automatically.
 
-## Known limitations
+## How it works
 
-- The pixel mascot requires a dedicated terminal with truecolor ANSI support and ≥ 80 columns. Claude Code's subprocess context cannot access the console directly (Windows limitation), so the daemon must run in a separate window.
-- Token tracking is single-machine only.
+Claude Code spawns hooks as pipe subprocesses with no console handle — they can't render to your terminal directly. Clodey's server runs **in your terminal** with real TTY access. Hooks fire → POST event to `localhost:49152` → server renders mascot in the protected scroll zone. Zero extra windows.
 
 ## License
 
