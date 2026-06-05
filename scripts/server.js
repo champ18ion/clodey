@@ -2,12 +2,9 @@
 'use strict';
 
 /**
- * Clodey server — runs in your terminal with real TTY access.
- * Hooks POST events here instead of rendering directly (which fails
- * because Claude Code spawns hooks without a console handle).
- *
- * Usage: node scripts/server.js
- * Then start Claude Code in the same terminal session.
+ * Clodey server — runs detached in the background, writes mascot via CONOUT$.
+ * Start with: node scripts/clodey.js serve   (returns immediately)
+ * Stop with:  node scripts/clodey.js stop
  */
 
 const http = require('http');
@@ -17,7 +14,7 @@ const path = require('path');
 
 const CLAUDE_DIR   = path.join(os.homedir(), '.claude');
 const PORT_FILE    = path.join(CLAUDE_DIR, 'clodey-port');
-const STATE_FILE   = path.join(CLAUDE_DIR, 'clodey-state.json');
+const PID_FILE     = path.join(CLAUDE_DIR, 'clodey-server.pid');
 const DEFAULT_PORT = 49152;
 
 const { transition, readState } = require('./state-machine');
@@ -29,17 +26,34 @@ const MASCOT_LINES = 11;
 const MASCOT_COLS  = 24;
 const REFRESH_MS   = 10 * 60 * 1000;
 
-// ── Terminal ──────────────────────────────────────────────────────────────────
+// ── Open the real console (works even as a detached background process) ────────
 
-const out = process.stdout;
+function openConsole() {
+  try {
+    if (process.stdout.isTTY) return process.stdout;
+    const ttyPath = process.platform === 'win32' ? '\\\\.\\CONOUT$' : '/dev/tty';
+    const fd = fs.openSync(ttyPath, 'w');
+    const tty = require('tty');
+    return new tty.WriteStream(fd);
+  } catch (_) {
+    return null;
+  }
+}
 
-if (!out.isTTY) {
-  console.error('[clodey] server must run in a real terminal (isTTY required)');
+const out = openConsole();
+if (!out) {
+  process.stderr.write('[clodey] no console available — cannot render\n');
   process.exit(1);
 }
 
+// Save dimensions so hooks can read them
+fs.writeFileSync(CLAUDE_DIR + '/clodey-cols', String(out.columns || 80));
+fs.writeFileSync(CLAUDE_DIR + '/clodey-rows', String(out.rows    || 24));
+
+// ── Rendering ─────────────────────────────────────────────────────────────────
+
 function setScrollRegion() {
-  const rows    = out.rows || 24;
+  const rows     = out.rows || 24;
   const safeRows = rows - MASCOT_LINES - 1;
   if (safeRows < 5) return;
   out.write(`\x1b[1;${safeRows}r`);
@@ -77,10 +91,7 @@ function clearMascot() {
 
 // ── Animation loop ────────────────────────────────────────────────────────────
 
-let frame      = 0;
-let blinkCycle = 0;
-let bubbleExp  = 0;
-let lastState  = null;
+let frame = 0, blinkCycle = 0, bubbleExp = 0, lastState = null;
 
 function tick() {
   try {
@@ -95,7 +106,6 @@ function tick() {
 
     blinkCycle = (blinkCycle + 1) % 24;
     const f = (st === 'idle' && blinkCycle === 0) ? 2 : frame;
-
     drawMascot(st, f, pct, min, showBubble);
     frame = (frame + 1) % 2;
   } catch (_) {}
@@ -113,13 +123,9 @@ function tokenAge() {
 
 async function handleEvent(signal, transcriptPath) {
   if (signal === 'idle' || signal === 'start') {
-    // Refresh after every Claude response (Stop hook) — run in background, don't block
-    rateFetcher.run(true).catch(() => {}).then(() => {
-      // Re-read tokens after fetch completes so the meter updates
-      getTokens(transcriptPath);
-    });
+    // After every Claude response — refresh in background, don't block
+    rateFetcher.run(true).catch(() => {}).then(() => getTokens(transcriptPath));
   } else if (tokenAge() > REFRESH_MS) {
-    // For other signals, only refresh if data is stale (> 10 min)
     await rateFetcher.run(true).catch(() => {});
   }
 
@@ -131,63 +137,36 @@ async function handleEvent(signal, transcriptPath) {
 // ── HTTP server ───────────────────────────────────────────────────────────────
 
 function readBody(req) {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     let data = '';
     req.on('data', chunk => { data += chunk; });
-    req.on('end',  () => {
-      try { resolve(JSON.parse(data.replace(/^﻿/, ''))); }
-      catch (_) { resolve({}); }
-    });
-    req.on('error', reject);
+    req.on('end',  () => { try { resolve(JSON.parse(data.replace(/^﻿/, ''))); } catch (_) { resolve({}); } });
+    req.on('error', () => resolve({}));
   });
 }
 
 const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && req.url === '/health') {
-    res.writeHead(200);
-    res.end('ok');
-    return;
+    res.writeHead(200); res.end('ok'); return;
   }
-
   if (req.method === 'POST' && req.url === '/hook') {
-    const body = await readBody(req).catch(() => ({}));
-    const signal         = body.signal || 'idle';
-    const transcriptPath = body.transcript_path || null;
-
-    await handleEvent(signal, transcriptPath).catch(() => {});
-
-    res.writeHead(200);
-    res.end('ok');
-    return;
+    const body = await readBody(req);
+    await handleEvent(body.signal || 'idle', body.transcript_path || null).catch(() => {});
+    res.writeHead(200); res.end('ok'); return;
   }
-
-  res.writeHead(404);
-  res.end();
+  res.writeHead(404); res.end();
 });
 
-// Find an open port starting from DEFAULT_PORT
 function listen(port) {
   server.listen(port, '127.0.0.1', () => {
     fs.writeFileSync(PORT_FILE, String(port));
-    // Save dimensions so hooks can read them if needed
-    fs.writeFileSync(CLAUDE_DIR + '/clodey-cols', String(out.columns || 80));
-    fs.writeFileSync(CLAUDE_DIR + '/clodey-rows', String(out.rows    || 24));
-
+    fs.writeFileSync(PID_FILE,  String(process.pid));
     setScrollRegion();
-    tick(); // draw immediately
-
-    out.write('\x1b[s\x1b[1;1H\x1b[2K'); // clear first line briefly for status
-    out.write(`\x1b[38;2;204;120;92mclodey\x1b[0m listening on :${port} — start claude in this terminal\r\n`);
-    out.write('\x1b[u');
+    tick();
   });
-
   server.on('error', e => {
-    if (e.code === 'EADDRINUSE' && port < DEFAULT_PORT + 10) {
-      listen(port + 1);
-    } else {
-      console.error(`[clodey] server error: ${e.message}`);
-      process.exit(1);
-    }
+    if (e.code === 'EADDRINUSE' && port < DEFAULT_PORT + 10) listen(port + 1);
+    else process.exit(1);
   });
 }
 
@@ -199,11 +178,11 @@ function cleanup() {
   clearInterval(animInterval);
   server.close();
   try { fs.unlinkSync(PORT_FILE); } catch (_) {}
-  out.write('\x1b[r'); // restore full scroll region
+  try { fs.unlinkSync(PID_FILE);  } catch (_) {}
+  out.write('\x1b[r');
   clearMascot();
   process.exit(0);
 }
 
 process.on('SIGTERM', cleanup);
 process.on('SIGINT',  cleanup);
-process.on('exit',    cleanup);
